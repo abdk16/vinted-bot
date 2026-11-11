@@ -1,6 +1,10 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 
+// ==================== DIAGNOSTIC AU DÉMARRAGE ====================
+console.log('🚀 Démarrage du bot v2 (diagnostic)...');
+console.log('📋 Node version :', process.version);
+
 // Ne jamais crasher silencieusement : on log et on continue
 process.on('uncaughtException', (err) => {
   console.error('💥 Uncaught exception :', err && err.message ? err.message : err);
@@ -10,29 +14,36 @@ process.on('unhandledRejection', (err) => {
   console.error('💥 Unhandled rejection :', err && err.message ? err.message : err);
 });
 
-// Import robuste de vinted-monitor (module ESM/TS : l'export peut être sur .default)
-const vintedMod = require('vinted-monitor');
-const VintedMonitor = vintedMod && (vintedMod.default || vintedMod);
-
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
-});
-
+// ==================== VÉRIFICATION DES VARIABLES ====================
 const VINTED_URL = process.env.VINTED_URL || '';
 const CHANNEL_ID = process.env.CHANNEL_ID || '';
 const TIME_RANGE_MIN = Number(process.env.TIME_RANGE_MIN || 10); // minutes
 
-const seenIds = new Set();
-const SEEN_LIMIT = 500;
-
-function rememberId(id) {
-  seenIds.add(String(id));
-  if (seenIds.size > SEEN_LIMIT) {
-    const it = seenIds.values();
-    for (let i = 0; i < seenIds.size - SEEN_LIMIT; i++) it.next();
-    seenIds.delete(it.next().value);
-  }
+console.log('--- Vérification des variables ---');
+console.log(`   DISCORD_TOKEN : ${process.env.DISCORD_TOKEN ? '✅ présent (' + process.env.DISCORD_TOKEN.length + ' caractères)' : '❌ MANQUANT'}`);
+if (process.env.DISCORD_TOKEN && process.env.DISCORD_TOKEN !== process.env.DISCORD_TOKEN.trim()) {
+  console.error('❌ ATTENTION : DISCORD_TOKEN a des espaces invisibles au début ou à la fin !');
 }
+console.log(`   CHANNEL_ID    : ${CHANNEL_ID ? '✅ présent (' + CHANNEL_ID + ')' : '❌ MANQUANT'}`);
+if (CHANNEL_ID && !/^\d+$/.test(CHANNEL_ID.trim())) {
+  console.error('❌ ATTENTION : CHANNEL_ID doit contenir uniquement des chiffres !');
+}
+console.log(`   VINTED_URL    : ${VINTED_URL ? '✅ présent' : '❌ MANQUANT'}`);
+if (VINTED_URL && !/https:\/\/www\.vinted\.\w{2}\/vetements\?/.test(VINTED_URL)) {
+  console.error('❌ ATTENTION : VINTED_URL doit ressembler à https://www.vinted.fr/vetements?search_text=...&order=newest_first');
+}
+console.log(`   TIME_RANGE_MIN: ${TIME_RANGE_MIN}`);
+console.log('----------------------------------');
+
+// ==================== IMPORT VINTED-MONITOR ====================
+const vintedMod = require('vinted-monitor');
+const VintedMonitor = vintedMod && (vintedMod.default || vintedMod);
+console.log(`📦 vinted-monitor chargé : ${typeof VintedMonitor === 'function' ? '✅ OK' : '❌ PROBLÈME'}`);
+
+// ==================== CLIENT DISCORD ====================
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds],
+});
 
 function isValidHttpUrl(str) {
   try {
@@ -46,35 +57,45 @@ function isValidHttpUrl(str) {
 client.once('ready', async () => {
   console.log(`✅ Connecté en tant que ${client.user.tag}`);
 
+  // Envoyer un message de démarrage dans le salon cible
+  if (CHANNEL_ID) {
+    try {
+      const channel = await client.channels.fetch(CHANNEL_ID);
+      await channel.send(
+        `🟢 **Bot en ligne !**\nJe surveille Vinted et j'enverrai les nouvelles annonces Ralph Lauren ici.\nBot : ${client.user.tag}`
+      );
+      console.log('📨 Message "Bot en ligne" envoyé dans le salon ✅');
+    } catch (err) {
+      console.error(`❌ Impossible d'envoyer le message de démarrage (${CHANNEL_ID}) : ${err.message}`);
+      console.error('   → Vérifie que CHANNEL_ID est correct et que le bot a accès au salon.');
+    }
+  }
+
   if (!VINTED_URL || !CHANNEL_ID) {
-    console.error(
-      "❌ Variables manquantes : vérifie VINTED_URL et CHANNEL_ID dans les variables d'environnement."
-    );
+    console.error('❌ Variables manquantes : VINTED_URL et CHANNEL_ID sont obligatoires.');
     return;
   }
 
   if (typeof VintedMonitor !== 'function') {
-    console.error(
-      '❌ Impossible de charger vinted-monitor (export introuvable). Version installée :',
-      require('vinted-monitor/package.json').version || 'inconnue'
-    );
+    console.error('❌ vinted-monitor illisible, impossible de surveiller Vinted.');
     return;
   }
 
   if (!/https:\/\/www\.vinted\.\w{2}\/vetements\?/.test(VINTED_URL)) {
-    console.error(
-      '❌ VINTED_URL invalide. Elle doit ressembler à :',
-      'https://www.vinted.fr/vetements?search_text=...&order=newest_first'
-    );
+    console.error('❌ VINTED_URL invalide. Elle doit ressembler à :', 'https://www.vinted.fr/vetements?search_text=...&order=newest_first');
     return;
   }
 
-  let channel;
-  try {
-    channel = await client.channels.fetch(CHANNEL_ID);
-  } catch (err) {
-    console.error(`❌ Impossible de récupérer le salon (${CHANNEL_ID}) : ${err.message}`);
-    return;
+  const seenIds = new Set();
+  const SEEN_LIMIT = 500;
+
+  function rememberId(id) {
+    seenIds.add(String(id));
+    if (seenIds.size > SEEN_LIMIT) {
+      const it = seenIds.values();
+      for (let i = 0; i < seenIds.size - SEEN_LIMIT; i++) it.next();
+      seenIds.delete(it.next().value);
+    }
   }
 
   const sendItem = (item) => {
@@ -104,8 +125,9 @@ client.once('ready', async () => {
       const photoUrl = info.photo && (info.photo.full_size_url || info.photo.url);
       if (isValidHttpUrl(photoUrl)) embed.setThumbnail(photoUrl);
 
-      channel
-        .send({ content: '🔥 Nouvelle annonce Vinted !', embeds: [embed] })
+      client.channels
+        .fetch(CHANNEL_ID)
+        .then((channel) => channel.send({ content: '🔥 Nouvelle annonce Vinted !', embeds: [embed] }))
         .catch((err) => console.error('Erreur envoi Discord :', err.message));
     } catch (err) {
       console.error('Erreur traitement item :', err.message);
@@ -117,7 +139,8 @@ client.once('ready', async () => {
     const monitor = new VintedMonitor(timeRange >= 60000 ? timeRange : 60000);
     monitor.onItemFound(sendItem);
     monitor.watch(VINTED_URL);
-    console.log(`👀 Surveillance de ${VINTED_URL} (items des ${TIME_RANGE_MIN} dernières minutes)`);
+    console.log(`👀 Surveillance lancée : ${VINTED_URL}`);
+    console.log(`⏱️  Fenêtre de détection : ${TIME_RANGE_MIN} dernières minutes`);
   } catch (err) {
     console.error('❌ Erreur du monitor Vinted :', err.message || err);
   }
@@ -126,9 +149,13 @@ client.once('ready', async () => {
 client.on('error', (err) => console.error('Erreur client Discord :', err.message));
 
 if (!process.env.DISCORD_TOKEN) {
-  console.error('❌ DISCORD_TOKEN manquant dans les variables d\'environnement.');
+  console.error('❌ DISCORD_TOKEN manquant : le bot ne peut pas se connecter.');
 } else {
+  console.log('🔑 Connexion à Discord en cours...');
   client.login(process.env.DISCORD_TOKEN).catch((err) => {
     console.error('❌ Connexion Discord impossible :', err.message);
+    if (String(err.message).includes('invalid token')) {
+      console.error('   → Ton token est invalide. Va sur le portail Discord, Bot, Reset Token, copie le NOUVEAU token et colle-le dans Railway Variables.');
+    }
   });
 }
