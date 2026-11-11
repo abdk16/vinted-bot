@@ -155,50 +155,58 @@ function buildItemUrl(item) {
   return base + '/items/' + item.id;
 }
 
+function textValue(value, fallback = 'N/A') {
+  if (value == null || value === '') return fallback;
+  if (typeof value !== 'object') return String(value);
+  const nested = value.title ?? value.name ?? value.label ?? value.value ?? value.amount;
+  return nested == null || nested === '' ? fallback : String(nested);
+}
+
 function sendItem(channel, item) {
   try {
-    const cur = item.currency || '';
-    const priceVal = item.total_item_price != null ? item.total_item_price : (item.price != null ? item.price : null);
-    const price = priceVal != null ? priceVal + ' ' + cur : 'N/A';
+    const rawPrice = item.total_item_price ?? item.price;
+    const priceAmount = typeof rawPrice === 'object'
+      ? (rawPrice.amount ?? rawPrice.value ?? rawPrice.amount_with_currency)
+      : rawPrice;
+    const currency = item.currency || (rawPrice && rawPrice.currency) || '€';
+    const price = priceAmount != null ? String(priceAmount) + ' ' + currency : 'N/A';
 
-const user = item.user || {};
-    const login = user.login || item.user_login || 'inconnu';
-    const rep = user.feedback_reputation != null ? user.feedback_reputation : item.user_feedback_reputation;
-    const cnt = user.feedback_count != null ? user.feedback_count : item.user_feedback_count;
-    const note = rep != null ? rep + '%' : '-';
-    const avis = cnt != null ? String(cnt) : '0';
-
-const url = buildItemUrl(item);
+    const user = item.user || item.seller || {};
+    const login = textValue(user.login ?? item.user_login, 'inconnu');
+    const rep = user.feedback_reputation ?? item.user_feedback_reputation ?? item.feedback_reputation;
+    const cnt = user.feedback_count ?? item.user_feedback_count ?? item.feedback_count;
+    const note = rep != null ? textValue(rep) + '%' : '-';
+    const avis = cnt != null ? textValue(cnt, '0') : '0';
+    const url = buildItemUrl(item);
     const memberUrl = login !== 'inconnu' ? siteOrigin() + '/member/' + login : null;
+    const photoUrl = item.photo && (item.photo.full_size_url || (item.photo.high_resolution && item.photo.high_resolution.url) || item.photo.url);
 
-const photoUrl = item.photo && (item.photo.full_size_url || (item.photo.high_resolution && item.photo.high_resolution.url) || item.photo.url);
-
-const embed = new EmbedBuilder()
+    const embed = new EmbedBuilder()
       .setColor(0x09b1ba)
-      .setTitle(String(item.title || 'Nouvelle annonce').slice(0, 256))
+      .setTitle(textValue(item.title, 'Nouvelle annonce').slice(0, 256))
       .setURL(url)
       .addFields(
-        { name: 'Prix', value: String(price).slice(0, 1024), inline: true },
-        { name: 'Marque', value: String(item.brand_title || 'N/A').slice(0, 1024), inline: true },
-        { name: 'Taille', value: String(item.size || item.size_title || 'N/A').slice(0, 1024), inline: true },
-        { name: 'Etat', value: String(item.status || item.state || 'N/A').slice(0, 1024), inline: true },
-        { name: 'Ville', value: String(item.city || 'N/A').slice(0, 1024), inline: true },
-        { name: 'Vendeur', value: login, inline: true },
+        { name: 'Prix', value: price.slice(0, 1024), inline: true },
+        { name: 'Marque', value: textValue(item.brand_title ?? item.brand, 'N/A').slice(0, 1024), inline: true },
+        { name: 'Taille', value: textValue(item.size ?? item.size_title, 'N/A').slice(0, 1024), inline: true },
+        { name: 'Etat', value: textValue(item.status ?? item.state, 'N/A').slice(0, 1024), inline: true },
+        { name: 'Ville', value: textValue(item.city ?? user.city, 'N/A').slice(0, 1024), inline: true },
+        { name: 'Vendeur', value: login.slice(0, 1024), inline: true },
         { name: 'Note vendeur', value: note + ' (' + avis + ' avis)', inline: false },
       )
       .setTimestamp();
 
-if (isValidHttpUrl(photoUrl)) embed.setThumbnail(photoUrl);
+    if (isValidHttpUrl(photoUrl)) embed.setThumbnail(photoUrl);
     if (memberUrl) embed.setAuthor({ name: 'Vendeur : ' + login, url: memberUrl });
 
-const row = new ActionRowBuilder().addComponents(
+    const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setLabel("Voir l'annonce")
         .setStyle(ButtonStyle.Link)
-        .setURL(url)
+        .setURL(url),
     );
 
-channel
+    channel
       .send({ content: 'Nouvelle annonce Vinted', embeds: [embed], components: [row] })
       .catch((err) => console.error('Erreur envoi Discord: ' + err.message));
   } catch (err) {
@@ -209,7 +217,7 @@ channel
 client.once('ready', async () => {
   console.log('Connecte en tant que ' + client.user.tag);
 
-if (CHANNEL_ID) {
+  if (CHANNEL_ID) {
     try {
       const channel = await client.channels.fetch(CHANNEL_ID);
       await channel.send('Bot en ligne ! Annonces enrichies activees.');
@@ -219,14 +227,14 @@ if (CHANNEL_ID) {
     }
   }
 
-if (!VINTED_URL || !CHANNEL_ID) {
+  if (!VINTED_URL || !CHANNEL_ID) {
     console.error('VINTED_URL et CHANNEL_ID sont obligatoires.');
     return;
   }
 
-console.log('Surveillance: ' + VINTED_URL);
+  console.log('Surveillance: ' + VINTED_URL);
 
-const checkNewItems = async () => {
+  const checkNewItems = async () => {
     let channel;
     try {
       channel = await client.channels.fetch(CHANNEL_ID);
@@ -260,7 +268,7 @@ const checkNewItems = async () => {
     }
   };
 
-try {
+  try {
     const data = await searchVinted();
     const items = (data && data.items) || [];
     items.forEach((it) => rememberId(String(it.id || '')));
@@ -270,7 +278,7 @@ try {
     console.error('Erreur API Vinted au demarrage: ' + err.message);
   }
 
-setInterval(() => {
+  setInterval(() => {
     checkNewItems().catch((e) => console.error('Erreur cycle: ' + e.message));
   }, CHECK_INTERVAL_SEC * 1000);
 });
