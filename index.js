@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
-const { Monitor } = require('vinted-monitor');
+const VintedMonitor = require('vinted-monitor').default;
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
@@ -8,18 +8,17 @@ const client = new Client({
 
 const VINTED_URL = process.env.VINTED_URL;
 const CHANNEL_ID = process.env.CHANNEL_ID;
-const INTERVAL = Number(process.env.INTERVAL || 30) * 1000; // en ms
+const TIME_RANGE_MIN = Number(process.env.TIME_RANGE_MIN || 10); // minutes
 
-// Évite les doublons (garde les 200 derniers IDs vus)
 const seenIds = new Set();
-const SEEN_LIMIT = 200;
+const SEEN_LIMIT = 500;
+
 function rememberId(id) {
-  seenIds.add(id);
+  seenIds.add(String(id));
   if (seenIds.size > SEEN_LIMIT) {
     const it = seenIds.values();
     for (let i = 0; i < seenIds.size - SEEN_LIMIT; i++) it.next();
-    const oldest = it.next().value;
-    seenIds.delete(oldest);
+    seenIds.delete(it.next().value);
   }
 }
 
@@ -42,43 +41,46 @@ client.once('ready', async () => {
   }
 
   const sendItem = (item) => {
-    if (!item || seenIds.has(item.id)) return;
-    rememberId(item.id);
+    const info = item && item.info ? item.info : item;
+    if (!info || !info.id || seenIds.has(String(info.id))) return;
+    rememberId(info.id);
+
+    const price = info.total_item_price
+      ? `${info.total_item_price} ${info.currency || ''}`.trim()
+      : info.price
+        ? `${info.price} ${info.currency || ''}`.trim()
+        : 'N/A';
 
     const embed = new EmbedBuilder()
       .setColor(0x09b1ba)
-      .setTitle(item.title || 'Nouvelle annonce')
-      .setURL(item.url)
+      .setTitle(info.title || 'Nouvelle annonce')
+      .setURL(info.url)
       .addFields(
-        { name: 'Prix', value: item.price ?? 'N/A', inline: true },
-        { name: 'Marque', value: item.brandTitle ?? 'N/A', inline: true },
-        { name: 'Taille', value: item.size ?? 'N/A', inline: true }
+        { name: 'Prix', value: price, inline: true },
+        { name: 'Marque', value: info.brand_title || 'N/A', inline: true },
+        { name: 'Taille', value: info.size_title || 'N/A', inline: true }
       )
       .setTimestamp();
 
-    if (item.photo) embed.setThumbnail(item.photo);
+    const photoUrl = info.photo && (info.photo.full_size_url || info.photo.url);
+    if (photoUrl) embed.setThumbnail(photoUrl);
 
     channel
       .send({ content: '🔥 Nouvelle annonce Vinted !', embeds: [embed] })
-      .catch((err) => console.error(`Erreur envoi Discord : ${err.message}`));
+      .catch((err) => console.error('Erreur envoi Discord :', err.message));
   };
 
-  // vinted-monitor : selon la version, la méthode s'appelle run() ou watch()
-  const monitor = new Monitor({
-    interval: INTERVAL,
-    requestConfig: {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
-        'Accept-Language': 'fr-FR,fr;q=0.9',
-      },
-    },
-  });
-
-  const watch = typeof monitor.run === 'function' ? monitor.run : monitor.watch;
-  watch.call(monitor, VINTED_URL, sendItem);
-
-  console.log(`👀 Surveillance de ${VINTED_URL} toutes les ${INTERVAL / 1000}s`);
+  try {
+    const monitor = new VintedMonitor(TIME_RANGE_MIN * 60 * 1000);
+    monitor.onItemFound(sendItem);
+    monitor.watch(VINTED_URL);
+    console.log(`👀 Surveillance de ${VINTED_URL} (items des ${TIME_RANGE_MIN} dernières minutes)`);
+  } catch (err) {
+    console.error('❌ Erreur du monitor Vinted :', err.message || err);
+    console.error(
+      "ℹ️ L'URL doit ressembler à : https://www.vinted.fr/vetements?search_text=...&order=newest_first"
+    );
+  }
 });
 
 client.on('error', (err) => console.error('Erreur client Discord :', err.message));
