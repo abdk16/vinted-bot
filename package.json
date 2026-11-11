@@ -1,6 +1,6 @@
 {
   "name": "vinted-bot",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Bot Discord qui envoie les nouvelles annonces Vinted dans un salon",
   "main": "index.js",
   "scripts": {
@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "discord.js": "^14.16.3",
-    "dotenv": "^16.4.5",
-    "vinted-monitor": "^0.2.4"
+    "dotenv": "^16.4.5"
   }
 }
