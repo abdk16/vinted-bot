@@ -26,6 +26,7 @@ const LBC_URL = process.env.LBC_URL || '';
 const LBC_CHANNEL_ID = String(process.env.LBC_CHANNEL_ID || CHANNEL_ID).trim();
 const LBC_API_KEY = process.env.LBC_API_KEY || '';
 const LBC_CHECK_INTERVAL_SEC = Number(process.env.LBC_CHECK_INTERVAL_SEC || 60);
+const LBC_TIME_RANGE_MIN = Number(process.env.LBC_TIME_RANGE_MIN || TIME_RANGE_MIN || 10);
 
 console.log('--- Variables ---');
 console.log('DISCORD_TOKEN : ' + (process.env.DISCORD_TOKEN ? 'OK present' : 'MANQUANT'));
@@ -33,6 +34,7 @@ console.log('CHANNEL_ID : ' + (CHANNEL_ID || 'MANQUANT'));
 console.log('VINTED_URL : ' + (VINTED_URL || 'MANQUANT'));
 console.log('LBC_URL : ' + (LBC_URL || 'MANQUANT (Leboncoin desactive)'));
 console.log('LBC_API_KEY : ' + (LBC_API_KEY ? 'OK present' : 'MANQUANT (Leboncoin desactive)'));
+console.log('LBC_TIME_RANGE_MIN : ' + LBC_TIME_RANGE_MIN);
 console.log('-----------------');
 
 const USER_AGENT =
@@ -178,7 +180,7 @@ function sendItem(channel, item) {
     const currency = item.currency || (rawPrice && rawPrice.currency) || '€';
     const price = priceAmount != null ? String(priceAmount) + ' ' + currency : 'N/A';
 
-const user = item.user || item.seller || {};
+    const user = item.user || item.seller || {};
     const login = textValue(user.login ?? item.user_login, 'inconnu');
     const rep = user.feedback_reputation ?? item.user_feedback_reputation ?? item.feedback_reputation;
     const cnt = user.feedback_count ?? item.user_feedback_count ?? item.feedback_count;
@@ -188,7 +190,7 @@ const user = item.user || item.seller || {};
     const memberUrl = login !== 'inconnu' ? siteOrigin() + '/member/' + login : null;
     const photoUrl = item.photo && (item.photo.full_size_url || (item.photo.high_resolution && item.photo.high_resolution.url) || item.photo.url);
 
-const embed = new EmbedBuilder()
+    const embed = new EmbedBuilder()
       .setColor(0x09b1ba)
       .setTitle(textValue(item.title, 'Nouvelle annonce').slice(0, 256))
       .setURL(url)
@@ -203,14 +205,14 @@ const embed = new EmbedBuilder()
       )
       .setTimestamp();
 
-if (isValidHttpUrl(photoUrl)) embed.setThumbnail(photoUrl);
+    if (isValidHttpUrl(photoUrl)) embed.setThumbnail(photoUrl);
     if (memberUrl) embed.setAuthor({ name: 'Vendeur : ' + login, url: memberUrl });
 
-const row = new ActionRowBuilder().addComponents(
+    const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setLabel("Voir l'annonce").setStyle(ButtonStyle.Link).setURL(url),
     );
 
-channel
+    channel
       .send({ content: 'Nouvelle annonce Vinted', embeds: [embed], components: [row] })
       .catch((err) => console.error('Erreur envoi Discord: ' + err.message));
   } catch (err) {
@@ -227,14 +229,28 @@ function rememberLbcId(id) {
   }
 }
 
+function lbcDate(ad) {
+  const raw = ad.first_publication_date || ad.creation_date || ad.index_date || ad.publication_date || null;
+  if (!raw) return null;
+  const ts = Date.parse(raw);
+  return Number.isNaN(ts) ? null : ts;
+}
+
+function isLbcFresh(ad, windowMin) {
+  const ts = lbcDate(ad);
+  if (ts == null) return false;
+  return Date.now() - ts <= windowMin * 60 * 1000;
+}
+
 function normalizeLbc(ad) {
   return {
     id: ad.list_id || ad.id || ad.ad_id,
     title: ad.subject || ad.title || 'Annonce Leboncoin',
-    price: ad.price != null ? ad.price + ' EUR' : 'N/A',
+    price: ad.price != null ? (Array.isArray(ad.price) ? ad.price[0] : ad.price) + ' EUR' : 'N/A',
     city: (ad.location && ad.location.city) || ad.city || 'N/A',
     url: ad.url || ad.link || (ad.list_id ? 'https://www.leboncoin.fr/ad/' + ad.list_id : null),
-    image: (ad.images && (ad.images.url || ad.images.small_url || ad.images.thumb_url)) || null,
+    image: (ad.images && ((ad.images.urls && ad.images.urls[0]) || ad.images.small_url || ad.images.thumb_url || ad.images.url)) || null,
+    date: lbcDate(ad),
   };
 }
 
@@ -242,8 +258,10 @@ async function searchLbc() {
   if (!LBC_API_KEY) {
     throw new Error('LBC_API_KEY absent : Leboncoin desactive');
   }
-  const query = (LBC_URL && new URL(LBC_URL).searchParams.get('text')) || 'pc gamer';
-  const res = await fetch('https://api.piloterr.com/v2/leboncoin/search?query=' + encodeURIComponent(query), {
+  if (!LBC_URL) {
+    throw new Error('LBC_URL absent : Leboncoin desactive');
+  }
+  const res = await fetch('https://api.piloterr.com/v2/leboncoin/search?query=' + encodeURIComponent(LBC_URL), {
     headers: { 'x-api-key': LBC_API_KEY, Accept: 'application/json' },
   });
   if (res.status === 401 || res.status === 403) {
@@ -268,15 +286,15 @@ function sendLbcItem(channel, ad) {
         { name: 'Prix', value: String(ad.price).slice(0, 1024), inline: true },
         { name: 'Ville', value: String(ad.city).slice(0, 1024), inline: true },
       )
-      .setTimestamp();
+      .setTimestamp(ad.date ? new Date(ad.date) : undefined);
 
-if (isValidHttpUrl(ad.image)) embed.setThumbnail(ad.image);
+    if (isValidHttpUrl(ad.image)) embed.setThumbnail(ad.image);
 
-const row = new ActionRowBuilder().addComponents(
+    const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setLabel("Voir l'annonce").setStyle(ButtonStyle.Link).setURL(ad.url),
     );
 
-channel
+    channel
       .send({ content: 'Nouvelle annonce Leboncoin', embeds: [embed], components: [row] })
       .catch((err) => console.error('Erreur envoi Discord LBC: ' + err.message));
   } catch (err) {
@@ -290,6 +308,7 @@ async function checkLbc(channel) {
     for (const ad of ads) {
       const id = String(ad.id || '');
       if (!id || seenLbcIds.has(id) || !ad.url) continue;
+      if (ad.date != null && !isLbcFresh(ad, Math.max(LBC_TIME_RANGE_MIN, 1))) continue;
       rememberLbcId(id);
       sendLbcItem(channel, ad);
     }
@@ -301,7 +320,7 @@ async function checkLbc(channel) {
 client.once('ready', async () => {
   console.log('Connecte en tant que ' + client.user.tag);
 
-if (CHANNEL_ID) {
+  if (CHANNEL_ID) {
     try {
       const channel = await client.channels.fetch(CHANNEL_ID);
       await channel.send('Bot en ligne ! Je surveille Vinted' + (LBC_URL && LBC_API_KEY ? ' et Leboncoin' : '') + '.');
@@ -311,14 +330,14 @@ if (CHANNEL_ID) {
     }
   }
 
-if (!VINTED_URL || !CHANNEL_ID) {
+  if (!VINTED_URL || !CHANNEL_ID) {
     console.error('VINTED_URL et CHANNEL_ID sont obligatoires.');
     return;
   }
 
-console.log('Surveillance Vinted: ' + VINTED_URL);
+  console.log('Surveillance Vinted: ' + VINTED_URL);
 
-try {
+  try {
     const data = await searchVinted();
     const items = (data && data.items) || [];
     items.forEach((it) => rememberId(String(it.id || '')));
@@ -327,7 +346,7 @@ try {
     console.error('Erreur API Vinted au demarrage: ' + err.message);
   }
 
-if (LBC_URL && LBC_API_KEY) {
+  if (LBC_URL && LBC_API_KEY) {
     console.log('Surveillance Leboncoin: ' + LBC_URL);
     try {
       const lbcChannel = await client.channels.fetch(LBC_CHANNEL_ID);
@@ -342,7 +361,7 @@ if (LBC_URL && LBC_API_KEY) {
     console.log('Leboncoin desactive (LBC_URL ou LBC_API_KEY absent)');
   }
 
-const checkNewItems = async () => {
+  const checkNewItems = async () => {
     let channel;
     try {
       channel = await client.channels.fetch(CHANNEL_ID);
@@ -376,7 +395,7 @@ const checkNewItems = async () => {
     }
   };
 
-setInterval(() => {
+  setInterval(() => {
     checkNewItems().catch((e) => console.error('Erreur cycle: ' + e.message));
   }, CHECK_INTERVAL_SEC * 1000);
 });
