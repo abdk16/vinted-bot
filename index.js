@@ -171,6 +171,20 @@ function buildItemUrl(item) {
   return base + '/items/' + item.id;
 }
 
+function vintedItemDate(item) {
+  const ts = item.created_at_ts
+    || (item.photo && item.photo.high_resolution && item.photo.high_resolution.timestamp)
+    || (item.photo && item.photo.timestamp)
+    || null;
+  return typeof ts === 'number' ? ts : null;
+}
+
+function isVintedItemFresh(item, windowMin) {
+  const ts = vintedItemDate(item);
+  if (ts == null) return false;
+  return Date.now() - ts * 1000 <= windowMin * 60 * 1000;
+}
+
 function sendItem(channel, item) {
   try {
     const rawPrice = item.total_item_price ?? item.price;
@@ -203,7 +217,7 @@ function sendItem(channel, item) {
         { name: 'Vendeur', value: login.slice(0, 1024), inline: true },
         { name: 'Note vendeur', value: note + ' (' + avis + ' avis)', inline: false },
       )
-      .setTimestamp();
+      .setTimestamp(new Date((vintedItemDate(item) || Math.floor(Date.now() / 1000)) * 1000));
 
     if (isValidHttpUrl(photoUrl)) embed.setThumbnail(photoUrl);
     if (memberUrl) embed.setAuthor({ name: 'Vendeur : ' + login, url: memberUrl });
@@ -377,20 +391,15 @@ client.once('ready', async () => {
       return;
     }
     const items = (data && data.items) || [];
-    const now = Date.now();
-    const windowMs = Math.max(TIME_RANGE_MIN, 1) * 60 * 1000;
     for (const item of items) {
       const id = String(item.id || '');
       if (!id || seenIds.has(id)) continue;
-      const ts = item.photo && item.photo.high_resolution && item.photo.high_resolution.timestamp;
-      const fresh = ts ? now - ts * 1000 <= windowMs : true;
       rememberId(id);
-      if (fresh) {
-        try {
-          sendItem(channel, item);
-        } catch (err) {
-          console.error('Erreur embed: ' + err.message);
-        }
+      if (!isVintedItemFresh(item, Math.max(TIME_RANGE_MIN, 1))) continue;
+      try {
+        sendItem(channel, item);
+      } catch (err) {
+        console.error('Erreur embed: ' + err.message);
       }
     }
   };
