@@ -279,7 +279,7 @@ async function searchLbc() {
     headers: { 'x-api-key': LBC_API_KEY, Accept: 'application/json' },
   });
   if (res.status === 401 || res.status === 403) {
-    throw new Error('Cle Piloterr invalide (statut ' + res.status + ');
+    throw new Error('Cle Piloterr invalide (statut ' + res.status + ')');
   }
   if (!res.ok) {
     throw new Error('Piloterr statut ' + res.status);
