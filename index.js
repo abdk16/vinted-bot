@@ -8,7 +8,7 @@ const {
   ButtonStyle,
 } = require('discord.js');
 
-console.log('Demarrage du bot v5 (annonces enrichies)');
+console.log('Demarrage du bot Vinted + Leboncoin');
 
 process.on('uncaughtException', (err) => {
   console.error('Uncaught exception:', err && err.message ? err.message : err);
@@ -22,14 +22,44 @@ const CHANNEL_ID = String(process.env.CHANNEL_ID || '').trim();
 const TIME_RANGE_MIN = Number(process.env.TIME_RANGE_MIN || 10);
 const CHECK_INTERVAL_SEC = Number(process.env.CHECK_INTERVAL_SEC || 30);
 
+// --- Leboncoin ---
+const LBC_URL = process.env.LBC_URL || '';
+const LBC_CHANNEL_ID = String(process.env.LBC_CHANNEL_ID || CHANNEL_ID).trim();
+const LBC_API_KEY = process.env.LBC_API_KEY || '';
+const LBC_CHECK_INTERVAL_SEC = Number(process.env.LBC_CHECK_INTERVAL_SEC || 60);
+
 console.log('--- Variables ---');
 console.log('DISCORD_TOKEN : ' + (process.env.DISCORD_TOKEN ? 'OK present' : 'MANQUANT'));
 console.log('CHANNEL_ID : ' + (CHANNEL_ID || 'MANQUANT'));
 console.log('VINTED_URL : ' + (VINTED_URL || 'MANQUANT'));
+console.log('LBC_URL : ' + (LBC_URL || 'MANQUANT (Leboncoin desactive)'));
+console.log('LBC_API_KEY : ' + (LBC_API_KEY ? 'OK present' : 'MANQUANT (Leboncoin desactive)'));
 console.log('-----------------');
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+function isValidHttpUrl(str) {
+  try {
+    const u = new URL(str);
+    return u.protocol === 'https:' || u.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+function textValue(value, fallback = 'N/A') {
+  if (value == null || value === '') return fallback;
+  if (typeof value !== 'object') return String(value);
+  const nested = value.title ?? value.name ?? value.label ?? value.value ?? value.amount;
+  return nested == null || nested === '' ? fallback : String(nested);
+}
+
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+
+// ============================================================
+// ======================= VINTED =============================
+// ============================================================
 
 const sessionState = { cookie: null, anonId: null, csrfToken: null, locale: 'fr-FR' };
 
@@ -64,7 +94,7 @@ async function fetchVintedSession() {
   sessionState.cookie = m[1];
   sessionState.anonId = (res.headers.get('x-anon-id') || '').trim() || null;
   const lang = html.match(/<html[^>]*\blang=["']([A-Za-z]{2}(?:-[A-Za-z0-9]+)?)["']/i);
-  const csrf = html.match(/"CSRF_TOKEN"\s*:\s*"([0-9a-fA-F-]{36})"/);
+  const csrf = html.match(/"CSRF_TOKEN"\s*:\s*"([0-9a-fA-F]{36})"/);
   sessionState.locale = lang ? lang[1] : 'fr-FR';
   sessionState.csrfToken = csrf ? csrf[1] : null;
   console.log('Session Vinted OK');
@@ -127,17 +157,6 @@ async function searchVinted() {
   return res.json();
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-
-function isValidHttpUrl(str) {
-  try {
-    const u = new URL(str);
-    return u.protocol === 'https:' || u.protocol === 'http:';
-  } catch {
-    return false;
-  }
-}
-
 const seenIds = new Set();
 
 function rememberId(id) {
@@ -155,13 +174,6 @@ function buildItemUrl(item) {
   return base + '/items/' + item.id;
 }
 
-function textValue(value, fallback = 'N/A') {
-  if (value == null || value === '') return fallback;
-  if (typeof value !== 'object') return String(value);
-  const nested = value.title ?? value.name ?? value.label ?? value.value ?? value.amount;
-  return nested == null || nested === '' ? fallback : String(nested);
-}
-
 function sendItem(channel, item) {
   try {
     const rawPrice = item.total_item_price ?? item.price;
@@ -171,7 +183,7 @@ function sendItem(channel, item) {
     const currency = item.currency || (rawPrice && rawPrice.currency) || '€';
     const price = priceAmount != null ? String(priceAmount) + ' ' + currency : 'N/A';
 
-    const user = item.user || item.seller || {};
+const user = item.user || item.seller || {};
     const login = textValue(user.login ?? item.user_login, 'inconnu');
     const rep = user.feedback_reputation ?? item.user_feedback_reputation ?? item.feedback_reputation;
     const cnt = user.feedback_count ?? item.user_feedback_count ?? item.feedback_count;
@@ -181,7 +193,7 @@ function sendItem(channel, item) {
     const memberUrl = login !== 'inconnu' ? siteOrigin() + '/member/' + login : null;
     const photoUrl = item.photo && (item.photo.full_size_url || (item.photo.high_resolution && item.photo.high_resolution.url) || item.photo.url);
 
-    const embed = new EmbedBuilder()
+const embed = new EmbedBuilder()
       .setColor(0x09b1ba)
       .setTitle(textValue(item.title, 'Nouvelle annonce').slice(0, 256))
       .setURL(url)
@@ -196,99 +208,13 @@ function sendItem(channel, item) {
       )
       .setTimestamp();
 
-    if (isValidHttpUrl(photoUrl)) embed.setThumbnail(photoUrl);
+if (isValidHttpUrl(photoUrl)) embed.setThumbnail(photoUrl);
     if (memberUrl) embed.setAuthor({ name: 'Vendeur : ' + login, url: memberUrl });
 
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel("Voir l'annonce")
-        .setStyle(ButtonStyle.Link)
-        .setURL(url),
+const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setLabel("Voir l'annonce").setStyle(ButtonStyle.Link).setURL(url),
     );
 
-    channel
-      .send({ content: 'Nouvelle annonce Vinted', embeds: [embed], components: [row] })
-      .catch((err) => console.error('Erreur envoi Discord: ' + err.message));
-  } catch (err) {
-    console.error('Erreur embed: ' + err.message);
-  }
-}
+channel
+      .send({ content:
 
-client.once('ready', async () => {
-  console.log('Connecte en tant que ' + client.user.tag);
-
-  if (CHANNEL_ID) {
-    try {
-      const channel = await client.channels.fetch(CHANNEL_ID);
-      await channel.send('Bot en ligne ! Annonces enrichies activees.');
-      console.log('Message de demarrage envoye');
-    } catch (err) {
-      console.error('Impossible d envoyer le message de demarrage: ' + err.message);
-    }
-  }
-
-  if (!VINTED_URL || !CHANNEL_ID) {
-    console.error('VINTED_URL et CHANNEL_ID sont obligatoires.');
-    return;
-  }
-
-  console.log('Surveillance: ' + VINTED_URL);
-
-  const checkNewItems = async () => {
-    let channel;
-    try {
-      channel = await client.channels.fetch(CHANNEL_ID);
-    } catch (err) {
-      console.error('Salon introuvable: ' + err.message);
-      return;
-    }
-    let data;
-    try {
-      data = await searchVinted();
-    } catch (err) {
-      console.error('Erreur API Vinted: ' + err.message);
-      return;
-    }
-    const items = (data && data.items) || [];
-    const now = Date.now();
-    const windowMs = Math.max(TIME_RANGE_MIN, 1) * 60 * 1000;
-    for (const item of items) {
-      const id = String(item.id || '');
-      if (!id || seenIds.has(id)) continue;
-      const ts = item.photo && item.photo.high_resolution && item.photo.high_resolution.timestamp;
-      const fresh = ts ? now - ts * 1000 <= windowMs : true;
-      rememberId(id);
-      if (fresh) {
-        try {
-          sendItem(channel, item);
-        } catch (err) {
-          console.error('Erreur embed: ' + err.message);
-        }
-      }
-    }
-  };
-
-  try {
-    const data = await searchVinted();
-    const items = (data && data.items) || [];
-    items.forEach((it) => rememberId(String(it.id || '')));
-    console.log(items.length + ' annonces existantes marquees comme vues');
-    console.log('En ecoute des nouvelles annonces...');
-  } catch (err) {
-    console.error('Erreur API Vinted au demarrage: ' + err.message);
-  }
-
-  setInterval(() => {
-    checkNewItems().catch((e) => console.error('Erreur cycle: ' + e.message));
-  }, CHECK_INTERVAL_SEC * 1000);
-});
-
-client.on('error', (err) => console.error('Erreur client Discord: ' + err.message));
-
-if (!process.env.DISCORD_TOKEN) {
-  console.error('DISCORD_TOKEN manquant.');
-} else {
-  client.login(process.env.DISCORD_TOKEN).catch((err) => {
-    console.error('Connexion Discord impossible: ' + err.message);
-  });
-}
