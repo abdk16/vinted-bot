@@ -35,6 +35,7 @@ console.log('VINTED_URL : ' + (VINTED_URL || 'MANQUANT'));
 console.log('LBC_URL : ' + (LBC_URL || 'MANQUANT (Leboncoin desactive)'));
 console.log('LBC_API_KEY : ' + (LBC_API_KEY ? 'OK present' : 'MANQUANT (Leboncoin desactive)'));
 console.log('LBC_TIME_RANGE_MIN : ' + LBC_TIME_RANGE_MIN);
+console.log('TIME_RANGE_MIN (Vinted) : ' + TIME_RANGE_MIN);
 console.log('-----------------');
 
 const USER_AGENT =
@@ -172,11 +173,22 @@ function buildItemUrl(item) {
 }
 
 function vintedItemDate(item) {
-  const ts = item.created_at_ts
-    || (item.photo && item.photo.high_resolution && item.photo.high_resolution.timestamp)
-    || (item.photo && item.photo.timestamp)
-    || null;
-  return typeof ts === 'number' ? ts : null;
+  const candidates = [
+    item.created_at_ts,
+    item.created_at,
+    item.published_at_ts,
+    item.photo && item.photo.high_resolution && item.photo.high_resolution.timestamp,
+    item.photo && item.photo.timestamp,
+    item.created_at_obj && item.created_at_obj.timestamp,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'number' && c > 0) return c;
+    if (typeof c === 'string' && c !== '') {
+      const parsed = Date.parse(c);
+      if (!Number.isNaN(parsed)) return Math.floor(parsed / 1000);
+    }
+  }
+  return null;
 }
 
 function isVintedItemFresh(item, windowMin) {
@@ -355,7 +367,12 @@ client.once('ready', async () => {
     const data = await searchVinted();
     const items = (data && data.items) || [];
     items.forEach((it) => rememberId(String(it.id || '')));
-    console.log(items.length + ' annonces Vinted existantes marquees comme vues');
+    console.log('Vinted OK: ' + items.length + ' annonces recues, marquees comme vues');
+    if (items.length > 0) {
+      const sample = items[0];
+      const ts = vintedItemDate(sample);
+      console.log('Vinted diagnostic: 1re annonce id=' + sample.id + ' titre="' + String(sample.title || '').slice(0, 40) + '" date=' + (ts ? new Date(ts * 1000).toISOString() : 'introuvable'));
+    }
   } catch (err) {
     console.error('Erreur API Vinted au demarrage: ' + err.message);
   }
@@ -391,17 +408,30 @@ client.once('ready', async () => {
       return;
     }
     const items = (data && data.items) || [];
+    let nouveautes = 0;
+    let sansDate = 0;
+    let tropVieilles = 0;
     for (const item of items) {
       const id = String(item.id || '');
       if (!id || seenIds.has(id)) continue;
       rememberId(id);
-      if (!isVintedItemFresh(item, Math.max(TIME_RANGE_MIN, 1))) continue;
+      const ts = vintedItemDate(item);
+      if (ts == null) {
+        sansDate += 1;
+        continue;
+      }
+      if (!isVintedItemFresh(item, Math.max(TIME_RANGE_MIN, 1))) {
+        tropVieilles += 1;
+        continue;
+      }
+      nouveautes += 1;
       try {
         sendItem(channel, item);
       } catch (err) {
         console.error('Erreur embed: ' + err.message);
       }
     }
+    console.log('[Vinted] ' + items.length + ' annonces recues | ' + nouveautes + ' nouvelles envoyees | ' + tropVieilles + ' trop vieilles | ' + sansDate + ' sans date');
   };
 
   setInterval(() => {
