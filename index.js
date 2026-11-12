@@ -161,7 +161,7 @@ function rememberId(id) {
   seenIds.add(String(id));
   if (seenIds.size > 500) {
     seenIds.delete(seenIds.values().next().value);
-    }
+  }
 }
 
 function buildItemUrl(item) {
@@ -285,7 +285,7 @@ async function searchLbc() {
     throw new Error('LBC_API_KEY absent : Leboncoin desactive');
   }
   if (!LBC_URL) {
-    throw new'LBC_URL absent : Leboncoin desactive');
+    throw new Error('LBC_URL absent : Leboncoin desactive');
   }
   const res = await fetch('https://api.piloterr.com/v2/leboncoin/search?query=' + encodeURIComponent(LBC_URL), {
     headers: { 'x-api-key': LBC_API_KEY, Accept: 'application/json' },
@@ -371,7 +371,7 @@ client.once('ready', async () => {
     if (items.length > 0) {
       const sample = items[0];
       const ts = vintedItemDate(sample);
-      console.log('Vinted diagnostic: 1re annonce id=' + sample.id + ' titre="' + String(sample.title || '').slice(0, 40) + '" date=' + (ts ? new Date(ts * 1000).toISOString() : 'INTRouvable'));
+      console.log('Vinted diagnostic: 1re annonce id=' + sample.id + ' titre="' + String(sample.title || '').slice(0, 40) + '" date=' + (ts ? new Date(ts * 1000).toISOString() : 'introuvable'));
     }
   } catch (err) {
     console.error('Erreur API Vinted au demarrage: ' + err.message);
@@ -431,7 +431,7 @@ client.once('ready', async () => {
         console.error('Erreur embed: ' + err.message);
       }
     }
-    console.log('[Vinted ' + new Date().toISOString() + '] ' + items.length + ' annonces recues | ' + nouveautes + ' nouvelles envoyees | ' + tropVieilles + ' trop vieilles | ' + sansDate + ' sans date');
+    console.log('[Vinted] ' + items.length + ' annonces recues | ' + nouveautes + ' nouvelles envoyees | ' + tropVieilles + ' trop vieilles | ' + sansDate + ' sans date');
   };
 
   setInterval(() => {
